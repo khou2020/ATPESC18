@@ -1,136 +1,208 @@
-/* Derived from MLIFE exercise */
 
-/* To build:  nvcc -o main main.cu */
-/* To run with a grid of 64x128: ./main 64 128 */
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <cuda.h>
 
-#define BORN 1
-#define DIES 0
+cudaError_t addWithCuda(unsigned int size, const float *a, const float *b, float *c);
 
-#define id(r,c) ((r)*Ncolumns+(c))
-
-/* build board */
-void init(int Nrows, int Ncolumns, int **board, int **newboard, int **c_board, int **c_newboard) {
-
-	int r, c, n;
-
-	*board = (int*)calloc(Nrows*Ncolumns, sizeof(int));
-	*newboard = (int*)calloc(Nrows*Ncolumns, sizeof(int));
-
-	/* death at the border */
-	for (r = 0; r<Nrows; ++r) {
-		(*board)[id(r, 0)] = DIES;
-		(*board)[id(r, Ncolumns - 1)] = DIES;
-
-		(*newboard)[id(r, 0)] = DIES;
-		(*newboard)[id(r, Ncolumns - 1)] = DIES;
+__global__ void addKernel(int N, const float *a, const float *b, float *c)
+{
+    int i = threadIdx.x + blockDim.x*blockIdx.x;
+	if (i < N) {
+		c[i] = a[i] + b[i];
 	}
-	for (c = 0; c<Ncolumns; ++c) {
-		(*board)[id(0, c)] = DIES;
-		(*board)[id(Nrows - 1, c)] = DIES;
-
-		(*newboard)[id(0, c)] = DIES;
-		(*newboard)[id(Nrows - 1, c)] = DIES;
-	}
-
-	/* random life */
-	srand(12345);
-	for (r = 1; r<Nrows - 1; ++r) {
-		for (c = 1; c<Ncolumns - 1; ++c) {
-			double rn = (double)1 / (double)(rand());
-			(*board)[id(r, c)] = BORN*(rn<0.5) + DIES*(rn >= 0.5);
-		}
-	}
-
-	/* EX01: allocate 1D DEVICE arrays with Nrows*Ncolumns ints for c_board and c_newboard here using cudaMalloc */
-
-	/* EX02a: copy board state from HOST board to DEVICE c_board using cudaMemcpy */
-
-	/* EX02b: copy newboard state from HOST newboard to DEVICE c_newboard using cudaMemcpy */
-
 }
 
-void destroy(int *board, int *newboard) {
-	free(board);
-	free(newboard);
-}
-
-/* EX03: convert this to a CUDA kernel */
-/* EX03a: annotate to indicate a kernel */
-void update(int Nrows, int Ncolumns, int *board, int *newboard) {
-
-	/* EX03b: replace double loop with 2D thread array */
-	for (int r = 1; r<Nrows - 1; ++r)
-		for (int c = 1; c<Ncolumns - 1; ++c) {
-			/* EX03c: convert thread indices and block indices into r,c */
-
-			/* EX03d: need to make sure indices r,c are in range 1<=r<Nrows-1, 1<=c<Ncolumns-1 */
-			int s =
-				board[id(r - 1, c - 1)] + board[id(r - 1, c - 0)] + board[id(r - 1, c + 1)] +
-				board[id(r + 0, c - 1)] + board[id(r + 0, c + 1)] +
-				board[id(r + 1, c - 1)] + board[id(r + 1, c - 0)] + board[id(r + 1, c + 1)];
-
-			newboard[id(r, c)]
-				= (s<2)*DIES + (s == 2)*board[id(r, c)] + (s == 3)*BORN + (s>3)*DIES;
-		}
-}
-
-/* EX04: add a copy from DEVICE to HOST using cudaMemcpy */
-void print(int Nrows, int Ncolumns, int *board, int *c_board) {
-
-	/* EX04: put cudaMemcpy here to copy from DEVICE c_board to HOST board*/
-
-
-	/* No need tochange this bit */
-	system("clear");
-	for (int r = 0; r<Nrows; ++r) {
-		for (int c = 0; c<Ncolumns; ++c) {
-			if (board[id(r, c)] == BORN) printf("*");
-			else printf(" ");
-		}
-		printf("\n");
+__global__ void revKernel(int N, float *a, float *b)
+{
+	int i = threadIdx.x + blockDim.x*blockIdx.x;
+	if (i < N) {
+		b[N - i - 1] = a[i];
 	}
 }
 
 
-int main(int argc, char **argv) {
+// Helper function for using CUDA to add vectors in parallel.
+cudaError_t revWithCuda(unsigned int size, float *a, float *b)
+{
+	float *dev_a = 0;
+	float *dev_b = 0;
+	cudaError_t cudaStatus;
 
-	if (argc<3) {
-		printf("usage: main [Nrows] [Ncolumns]\n");
-		exit(1);
+	// Choose which GPU to run on, change this on a multi-GPU system.
+	cudaStatus = cudaSetDevice(0);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
+		goto Error;
 	}
 
-	/* initialize board */
-	int Nrows = atoi(argv[1]);
-	int Ncolumns = atoi(argv[2]);
-	int *board, *newboard;
-	int *c_board, *c_newboard;
-
-	init(Nrows, Ncolumns, &board, &newboard, &c_board, &c_newboard);
-
-	/* run some iterations */
-	int Nit = 100;
-	for (int it = 0; it<Nit; ++it) {
-
-		/* EX05a: define thread-block size and grid size here using 16x16 thread-blocks*/
-		int T = 16;
-		dim3 bDim;
-		dim3 gDim;
-
-		/* EX05b: add kernel launch syntax here */
-		update(Nrows, Ncolumns, c_board, c_newboard);
-
-		/* EX05c: add kernel launch syntax here */
-		update(Nrows, Ncolumns, c_newboard, c_board);
-
-		print(Nrows, Ncolumns, board, c_board);
+	cudaStatus = cudaMalloc((void**)&dev_a, size * sizeof(float));
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+		goto Error;
 	}
 
-	destroy(board, newboard);
+	cudaStatus = cudaMalloc((void**)&dev_b, size * sizeof(float));
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+		goto Error;
+	}
 
-	exit(0);
-	return 0;
+	// Copy input vectors from host memory to GPU buffers.
+	cudaStatus = cudaMemcpy(dev_a, a, size * sizeof(float), cudaMemcpyHostToDevice);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy failed!");
+		goto Error;
+	}
+
+	// Launch a kernel on the GPU with one thread for each element.
+	int nt = 10;
+	int nb = (size + nt - 1) / nt;
+	revKernel << <nb, nt >> >(size, dev_a, dev_b);
+
+	// Check for any errors launching the kernel
+	cudaStatus = cudaGetLastError();
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "addKernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
+		goto Error;
+	}
+
+	// cudaDeviceSynchronize waits for the kernel to finish, and returns
+	// any errors encountered during the launch.
+	cudaStatus = cudaDeviceSynchronize();
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+		goto Error;
+	}
+
+	// Copy output vector from GPU buffer to host memory.
+	cudaStatus = cudaMemcpy(b, dev_b, size * sizeof(float), cudaMemcpyDeviceToHost);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpy failed!");
+		goto Error;
+	}
+
+Error:
+	cudaFree(dev_a);
+	cudaFree(dev_b);
+
+	return cudaStatus;
+}
+
+void addVectors(int N, float *a, float *b, float *c) {
+	int i;
+
+	for (i = 0; i < N; i++) {
+		c[i] = a[i] + b[i];
+	}
+}
+
+int main()
+{
+	int N = 100;
+	int i;
+	float *a = (float*)malloc(N * sizeof(float));
+	float *b = (float*)malloc(N * sizeof(float));
+	float *c = (float*)malloc(N * sizeof(float));
+
+	for (i = 0; i < N; i++) {
+		a[i] = i;
+	}
+
+	//addVectors(N, a, b, c);
+	addWithCuda(N, a, b, c);
+
+	for (i = 0; i < 5; i++) {
+		printf("b[%d] = %f\n", i, b[i]);
+	}
+
+	free(a);
+	free(b);
+	free(c);
+    return 0;
+}
+
+
+// Helper function for using CUDA to add vectors in parallel.
+cudaError_t addWithCuda(unsigned int size, const float *a, const float *b, float *c)
+{
+	float *dev_a = 0;
+	float *dev_b = 0;
+	float *dev_c = 0;
+    cudaError_t cudaStatus;
+
+    // Choose which GPU to run on, change this on a multi-GPU system.
+    cudaStatus = cudaSetDevice(0);
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
+        goto Error;
+    }
+
+    // Allocate GPU buffers for three vectors (two input, one output)    .
+    cudaStatus = cudaMalloc((void**)&dev_c, size * sizeof(float));
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMalloc failed!");
+        goto Error;
+    }
+
+    cudaStatus = cudaMalloc((void**)&dev_a, size * sizeof(float));
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMalloc failed!");
+        goto Error;
+    }
+
+    cudaStatus = cudaMalloc((void**)&dev_b, size * sizeof(float));
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMalloc failed!");
+        goto Error;
+    }
+
+    // Copy input vectors from host memory to GPU buffers.
+    cudaStatus = cudaMemcpy(dev_a, a, size * sizeof(float), cudaMemcpyHostToDevice);
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMemcpy failed!");
+        goto Error;
+    }
+
+    cudaStatus = cudaMemcpy(dev_b, b, size * sizeof(float), cudaMemcpyHostToDevice);
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMemcpy failed!");
+        goto Error;
+    }
+
+    // Launch a kernel on the GPU with one thread for each element.
+	int nt = 10;
+	int nb = (size + nt - 1) / nt;
+    addKernel<<<nb, nt>>>(size, dev_a, dev_b, dev_c);
+
+    // Check for any errors launching the kernel
+    cudaStatus = cudaGetLastError();
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "addKernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
+        goto Error;
+    }
+    
+    // cudaDeviceSynchronize waits for the kernel to finish, and returns
+    // any errors encountered during the launch.
+    cudaStatus = cudaDeviceSynchronize();
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+        goto Error;
+    }
+
+    // Copy output vector from GPU buffer to host memory.
+    cudaStatus = cudaMemcpy(c, dev_c, size * sizeof(float), cudaMemcpyDeviceToHost);
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMemcpy failed!");
+        goto Error;
+    }
+
+Error:
+    cudaFree(dev_c);
+    cudaFree(dev_a);
+    cudaFree(dev_b);
+    
+    return cudaStatus;
 }
